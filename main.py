@@ -1,13 +1,44 @@
 import os
 import gym
-from gym import spaces
+import gymnasium
+from gymnasium import spaces
 from gym.utils import seeding
 import numpy as np
 from scipy.integrate import odeint
 from scipy.stats import truncnorm
 from scipy.signal import savgol_filter
 
-class SpeechFluencyEnv(gym.Env):
+from stable_baselines3 import PPO
+from stable_baselines3.common.env_checker import check_env
+
+
+import pandas as pd
+
+class Medication:
+    def __init__(self, name, effect_onset, effect_rate, treatments, available_doses, side_effect_rate, half_life, drug_class):
+        self.name = name
+        self.time_to_effect = effect_onset
+        self.effect_rate = effect_rate
+        self.treatments = treatments.split(",")
+        self.available_doses = [float(available_doses)] # for drugs2.csv
+        # self.available_doses = [float(available_doses) for available_doses in available_doses.split(",")]
+        self.side_effect_rate = side_effect_rate
+        self.half_life = half_life
+        self.drug_class = drug_class
+
+    def __str__(self) -> str:
+        return f"Medication: {self.name}\nEffect Onset: {self.time_to_effect}\nEffect Rate: {self.effect_rate}\nTreatments: {self.treatments}\nAvailable Doses: {self.available_doses}\nSide Effect Rate: {self.side_effect_rate}\nHalf Life: {self.half_life}\n"
+
+    def __repr__(self) -> str:
+        return f"Medication: {self.name}\nEffect Onset: {self.time_to_effect}\nEffect Rate: {self.effect_rate}\nTreatments: {self.treatments}\nAvailable Doses: {self.available_doses}\nSide Effect Rate: {self.side_effect_rate}\nHalf Life: {self.half_life}\n"
+    
+    def __eq__(self, o: object) -> bool:
+        return self.name == o.name
+    
+    def __hash__(self) -> int:
+        return hash(self.name)
+
+class SpeechFluencyEnv(gymnasium.Env):
     """
     Description:
         See dosing_rl/resources/Diabetic Background.ipynb
@@ -16,24 +47,18 @@ class SpeechFluencyEnv(gym.Env):
     Observation:
         Type: Box(9)
                                                                 Min         Max
-        0	Blood Glucose                                       0           Inf
-        1	Remote Insulin                                      0           Inf
-        2	Plasma Insulin                                      0           Inf
-        3	S1                                                  0           Inf
-        4	S2                                                  0           Inf
-        5	Gut blood glucose                                   0           Inf
-        6	Meal disturbance                                    0           Inf
-        7	Previous Blood glucose                              0           Inf
-        8   Previous meal disturbance                           0           Inf
+        0	Speech Fluency                                      0           1
 
     Actions:
-        Type: Continuous
-        Administered Insulin pump [mU/min]
+        Type: Discrete
+        
 
     Reward:
-        smooth function centered at 80 (self.target)
+        Play around with
+        
     Starting State:
-        http://apmonitor.com/pdc/index.php/Main/DiabeticBloodGlucose
+        Randomly initialize the state
+
     Episode Termination:
         self.episode_length reached
     """
@@ -47,25 +72,28 @@ class SpeechFluencyEnv(gym.Env):
 
         # Lists that will hold episode data
         self.speech_fluency = None
+        self.prev_speech_fluency = None
         self.depression = None
         self.anxiety = None
         self.insomnia = None
-        self.medication_effect = None
         self.day = None
-        self.medication_dose = None
+        self.medication_dose = {}
 
-        # Defining possible actions (medication dose)
-        self.action_space = spaces.Box(0.0, 10.0, shape=(1,))
+        df = pd.read_csv('data/drugs2.csv', delimiter='\t')
+        medications = [Medication(row['name'], row['onset'], row['success_rate'], row['treats'], row['doses'], row['adr_rate'], row['half_life'], row['type']) for _, row in df.iloc[0:15].iterrows()]
 
-        # Defining observation space
-        lows = np.zeros(5)
-        highs = np.ones(5) * np.inf
-        self.observation_space = spaces.Box(lows, highs)
+        self._medication_dose_pairs = [(medication, dose) for medication in medications for dose in medication.available_doses]
 
-        # Reward definitions
-        self.target_fluency = 0.8
-        self.min_fluency = 0.5
-        self.max_fluency = 1.0
+        # Defining action space
+        self.action_space = spaces.Discrete(len(self._medication_dose_pairs))
+
+        # Defining observation space (speech fluency)
+        self.observation_space = spaces.Box(low=0, high=1, shape=(1,), dtype=np.float32)
+
+        # # Reward definitions
+        # self.target_fluency = 0.8
+        # self.min_fluency = 0.0
+        # self.max_fluency = 1.0
 
         # Store what the agent tried
         self.curr_step = 0
@@ -112,50 +140,56 @@ class SpeechFluencyEnv(gym.Env):
         """
 
         if self.speech_fluency is None:
-            raise Exception("You need to reset() the environment before calling step()!")
+            raise Exception("You need to reset() the environment before calling step()!")        
 
-        # add new action to medication dose list
-        self.medication_dose.append(action[0])
-
+        medication, dose = self._medication_dose_pairs[action]
+        if medication in self.medication_dose:
+            self.medication_dose[medication] += dose
+        else:
+            self.medication_dose[medication] = dose
+        
         # check if we're done
         if self.curr_step >= self.episode_length - 1:
             self.are_we_done = True
 
-        self._update_state(action[0])
+        self._update_state(self._medication_dose_pairs[action])
 
-        state = np.array([self.speech_fluency,
-                          self.depression,
-                          self.anxiety,
-                          self.insomnia,
-                          self.medication_effect])
+        state = np.array([self.speech_fluency], dtype=np.float32)
 
         reward = self._get_reward()
 
         # increment episode
         self.curr_step += 1
 
-        return state, reward, self.are_we_done, {}
+        return state, reward, self.are_we_done, False, {}
 
     def _update_state(self, medication_dose):
-        self.medication_effect = medication_dose / (medication_dose + 1)
-        self.speech_fluency = np.clip(self.speech_fluency + self.medication_effect - 0.01 * self.depression, 0, 1)
-        self.depression = np.clip(self.depression - self.medication_effect * 0.1, 0, 5)
-        self.anxiety = np.clip(self.anxiety - self.medication_effect * 0.1, 0, 5)
-        self.insomnia = np.clip(self.insomnia - self.medication_effect * 0.1, 0, 5)
+        for med, dose in self.medication_dose.items():
+            decay = np.exp(-np.log(2) / med.half_life)
+            self.medication_dose[med] = dose * decay
+
+            for condition in med.treatments:
+                effect = med.effect_rate * dose / 100
+
+                if condition == "depression":
+                    self.depression -= effect
+                elif condition == "anxiety":
+                    self.anxiety -= effect
+                elif condition == "insomnia":
+                    self.insomnia -= effect
+
+        self.depression = np.clip(self.depression, 0, 5)
+        self.anxiety = np.clip(self.anxiety, 0, 5)
+        self.insomnia = np.clip(self.insomnia, 0, 5)
+
+        self.prev_speech_fluency = self.speech_fluency
+        self.speech_fluency = 1 - (self.depression + self.anxiety + self.insomnia) / 15
 
     def _get_reward(self):
-        """
-        Reward is based on smooth function.
-        Target blood glucose level: 80
-        g parameter will change slope: 0.7
-        """
-        reward = 1 - np.tanh(np.abs((self.speech_fluency - self.target_fluency) / 0.1)) ** 2
-        if (self.speech_fluency < self.min_fluency) or (self.speech_fluency > self.max_fluency):
-            reward = -1.
-
+        reward = self.speech_fluency - self.prev_speech_fluency
         return reward
 
-    def reset(self):
+    def reset(self, seed=None):
         """
         Reset the state of the environment and returns an initial observation (state)
         """
@@ -164,21 +198,16 @@ class SpeechFluencyEnv(gym.Env):
         self.are_we_done = False
 
         # Steady State Initial Conditions for the States
-        self.speech_fluency = np.random.uniform(self.min_fluency, self.max_fluency)
+        self.speech_fluency = np.random.uniform(0, 1)
         self.depression = np.random.randint(1, 6)
         self.anxiety = np.random.randint(1, 6)
         self.insomnia = np.random.randint(1, 6)
-        self.medication_effect = 0.0
 
-        self.medication_dose = [0.0]
+        self.medication_dose = {}
 
-        state = np.array([self.speech_fluency,
-                          self.depression,
-                          self.anxiety,
-                          self.insomnia,
-                          self.medication_effect])
+        state = np.array([self.speech_fluency], dtype=np.float32)
 
-        return state
+        return state, {}
 
     def seed(self, seed=None):
         self.np_random, _ = seeding.np_random(seed)
@@ -188,11 +217,27 @@ class SpeechFluencyEnv(gym.Env):
 if __name__ == "__main__":
     env = SpeechFluencyEnv()
     env.set_episode_length(day_interval=1)
-    state = env.reset()
-    print("Initial state:", state)
 
+    # Check the environment
+    check_env(env)
+
+    # Instantiate the agent
+    model = PPO("MlpPolicy", env, verbose=1)
+
+    # Train the agent
+    model.learn(total_timesteps=10000)
+
+    # Save the agent
+    model.save("ppo_speech_fluency")
+
+    # Load the trained agent
+    model = PPO.load("ppo_speech_fluency")
+
+    # Evaluate the agent
+    state, _ = env.reset()
     done = False
     while not done:
-        action = env.action_space.sample()
-        state, reward, done, _ = env.step(action)
+        action, _ = model.predict(state)
+        state, reward, done, _, _ = env.step(action)
         print(f"Step: {env.curr_step}, State: {state}, Reward: {reward}")
+        print(f"Medication Dose: {action}")
