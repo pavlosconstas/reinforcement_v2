@@ -35,30 +35,6 @@ class Medication:
         return hash(self.name)
 
 class SpeechFluencyEnv(gymnasium.Env):
-    """
-    Description:
-        See dosing_rl/resources/Diabetic Background.ipynb
-    Source:
-        See dosing_rl/resources/Diabetic Background.ipynb
-    Observation:
-        Type: Box(9)
-                                                                Min         Max
-        0	Speech Fluency                                      0           1
-
-    Actions:
-        Type: Discrete
-        
-
-    Reward:
-        Play around with
-        
-    Starting State:
-        Randomly initialize the state
-
-    Episode Termination:
-        self.episode_length reached
-    """
-
     def __init__(self):
         self.__version__ = "0.0.1"
 
@@ -107,36 +83,6 @@ class SpeechFluencyEnv(gymnasium.Env):
         self.episode_length = 200
 
     def step(self, action):
-        """
-        The agent takes a step in the environment.
-
-        Parameters
-        ----------
-        action : list of length 1
-
-        Returns
-        -------
-        observation (state), reward, episode_over, info : tuple
-            ob (object) :
-                an environment-specific object representing your observation of
-                the environment.
-            reward (float) :
-                amount of reward achieved by the previous action. The scale
-                varies between environments, but the goal is always to increase
-                your total reward.
-            episode_over (bool) :
-                whether it's time to reset the environment again. Most (but not
-                all) tasks are divided up into well-defined episodes, and done
-                being True indicates the episode has terminated. (For example,
-                perhaps the pole tipped too far, or you lost your last life.)
-            info (dict) :
-                 diagnostic information useful for debugging. It can sometimes
-                 be useful for learning (for example, it might contain the raw
-                 probabilities behind the environment's last state change).
-                 However, official evaluations of your agent are not allowed to
-                 use this for learning.
-        """
-
         if self.speech_fluency is None:
             raise Exception("You need to reset() the environment before calling step()!")        
 
@@ -191,10 +137,6 @@ class SpeechFluencyEnv(gymnasium.Env):
         return reward
 
     def reset(self, seed=None):
-        """
-        Reset the state of the environment and returns an initial observation (state)
-        """
-
         self.curr_step = 0
         self.are_we_done = False
 
