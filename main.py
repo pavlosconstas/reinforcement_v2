@@ -11,7 +11,6 @@ from scipy.signal import savgol_filter
 from stable_baselines3 import PPO
 from stable_baselines3.common.env_checker import check_env
 
-
 import pandas as pd
 
 class Medication:
@@ -20,8 +19,8 @@ class Medication:
         self.time_to_effect = effect_onset
         self.effect_rate = effect_rate
         self.treatments = treatments.split(",")
-        self.available_doses = [float(available_doses)] # for drugs2.csv
-        # self.available_doses = [float(available_doses) for available_doses in available_doses.split(",")]
+        # self.available_doses = [float(available_doses)] # for drugs2.csv
+        self.available_doses = [float(available_doses) for available_doses in available_doses.split(",")]
         self.side_effect_rate = side_effect_rate
         self.half_life = half_life
         self.drug_class = drug_class
@@ -77,9 +76,11 @@ class SpeechFluencyEnv(gymnasium.Env):
         self.anxiety = None
         self.insomnia = None
         self.day = None
+        self.side_effect = None
         self.medication_dose = {}
 
-        df = pd.read_csv('data/drugs2.csv', delimiter='\t')
+        # df = pd.read_csv('data/drugs2.csv', delimiter='\t')
+        df = pd.read_csv('data/modified_drugs.csv', delimiter='\t')
         medications = [Medication(row['name'], row['onset'], row['success_rate'], row['treats'], row['doses'], row['adr_rate'], row['half_life'], row['type']) for _, row in df.iloc[0:15].iterrows()]
 
         self._medication_dose_pairs = [(medication, dose) for medication in medications for dose in medication.available_doses]
@@ -164,6 +165,7 @@ class SpeechFluencyEnv(gymnasium.Env):
         return state, reward, self.are_we_done, False, {}
 
     def _update_state(self, medication_dose):
+        self.side_effect = 0
         for med, dose in self.medication_dose.items():
             decay = np.exp(-np.log(2) / med.half_life)
             self.medication_dose[med] = dose * decay
@@ -178,15 +180,17 @@ class SpeechFluencyEnv(gymnasium.Env):
                 elif condition == "insomnia":
                     self.insomnia -= effect
 
+                self.side_effect += med.side_effect_rate * self.medication_dose[med] / 100
+
         self.depression = np.clip(self.depression, 0, 5)
         self.anxiety = np.clip(self.anxiety, 0, 5)
         self.insomnia = np.clip(self.insomnia, 0, 5)
 
         self.prev_speech_fluency = self.speech_fluency
-        self.speech_fluency = 1 - (self.depression + self.anxiety + self.insomnia) / 15
+        self.speech_fluency = 1 - (self.depression + self.anxiety + self.insomnia) / 15 
 
     def _get_reward(self):
-        reward = self.speech_fluency - self.prev_speech_fluency
+        reward = (self.speech_fluency - self.prev_speech_fluency) * 100 - self.side_effect
         return reward
 
     def reset(self, seed=None):
@@ -202,7 +206,8 @@ class SpeechFluencyEnv(gymnasium.Env):
         self.depression = np.random.randint(1, 6)
         self.anxiety = np.random.randint(1, 6)
         self.insomnia = np.random.randint(1, 6)
-
+        self.day = 0
+        self.side_effect = 0
         self.medication_dose = {}
 
         state = np.array([self.speech_fluency], dtype=np.float32)
@@ -217,27 +222,47 @@ class SpeechFluencyEnv(gymnasium.Env):
 if __name__ == "__main__":
     env = SpeechFluencyEnv()
     env.set_episode_length(day_interval=1)
-
-    # Check the environment
+    train = False
     check_env(env)
-
-    # Instantiate the agent
-    model = PPO("MlpPolicy", env, verbose=1)
-
-    # Train the agent
-    model.learn(total_timesteps=10000)
-
-    # Save the agent
-    model.save("ppo_speech_fluency")
-
-    # Load the trained agent
-    model = PPO.load("ppo_speech_fluency")
+    
+    if train:
+        model = PPO("MlpPolicy", env, verbose=1)
+        model.learn(total_timesteps=50000)
+        model.save("ppo_speech_fluency")
+    else:
+        model = PPO.load("ppo_speech_fluency")
 
     # Evaluate the agent
     state, _ = env.reset()
     done = False
+    obj_list = []
+    init_obj = {
+        "step": 0,
+        "speech_fluency": state[0],
+        "depression": env.depression,
+        "anxiety": env.anxiety,
+        "insomnia": env.insomnia,
+        "side_effect": env.side_effect,
+        "reward": 0,
+        "action": None
+    }
+    obj_list.append(init_obj)
     while not done:
         action, _ = model.predict(state)
         state, reward, done, _, _ = env.step(action)
         print(f"Step: {env.curr_step}, State: {state}, Reward: {reward}")
         print(f"Medication Dose: {action}")
+        day_obj = {
+            "step": env.curr_step,
+            "speech_fluency": state[0],
+            "depression": env.depression,
+            "anxiety": env.anxiety,
+            "insomnia": env.insomnia,
+            "side_effect": env.side_effect,
+            "reward": reward,
+            "action": action
+        }
+        obj_list.append(day_obj)
+
+    pd.DataFrame(obj_list).to_csv("out/ppo_speech_fluency.csv", index=False)
+

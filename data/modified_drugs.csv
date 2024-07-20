@@ -1,0 +1,14 @@
+name	onset	success_rate	treats	doses	type	adr_rate	half_life	Unnamed: 8
+clomipramine	5	0.5	anxiety	1.0,2.0,3.0,4.0,5.0,6.0,7.0,8.0,9.0,10.0	tca	0.18	36	sR
+imipramine	10	0.57	anxiety,depression	1.0,2.0,3.0,4.0,5.0,6.0,7.0	tca	0.18	20	sR
+selegiline	15	0.5	depression	1.0,2.0,3.0,4.0	maoi	0.311	20	
+venlafaxine-xr	10	0.74	depression	1.0,2.0,3.0,4.0,5.0,6.0,7.0	snri	0.196	18	
+mirtazapine	7	0.62	anxiety,depression,insomnia	1.0,2.0,3.0	teca	0.114	30	
+sertraline	26	0.46	anxiety,depression	1.0,2.0,3.0,4.0,5.0	ssri	0.168	30	
+fluoxetine	14	0.55	anxiety,depression	1.0,2.0,3.0,4.0	ssri	0.136	30	
+fluvoxamine	10	0.46	anxiety,depression	1.0,2.0,3.0,4.0	ssri	0.182	30	
+escitalopram	14	0.76	anxiety,depression	1.0,2.0,3.0	ssri	0.296	30	
+triazolam	4	0.95	anxiety,insomnia	1.0,2.0,3.0,4.0	bzd	0.25	20	s
+esazolam	4	0.95	insomnia	1.0,2.0,3.0	bzd	0.25	10	s
+zolpidem	2	0.9	insomnia	1.0,2.0	zd	0.25	10	s
+no-treat	0	-0.2	anxiety,insomnia,depression	1.0	none	0.0	1	
